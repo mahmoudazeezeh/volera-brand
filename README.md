@@ -32,7 +32,7 @@ npm run preview
 
 4. الرابط: `https://mahmoudazeezeh.github.io/volera-brand/`
 
-> مسار الإنتاج في `vite.config.ts` هو `/volera-brand/`. للنشر على جذر النطاق غيّر `base` إلى `'/'`.
+> **المسارات:** على **GitHub Pages** يُبنى المشروع بـ `VITE_BASE_PATH=/volera-brand/` من الـ workflow. على **Vercel** يُكتشف `VERCEL` تلقائياً فيُستخدم الجذر `/` (لا حاجة لإعداد يدوي). لبناء محلي بجذر: `VITE_BASE_PATH=/ npm run build`.
 
 ### تشغيل يدوي
 

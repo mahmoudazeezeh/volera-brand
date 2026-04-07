@@ -36,6 +36,8 @@ jobs:
         run: npm ci
 
       - name: Build (Vite)
+        env:
+          VITE_BASE_PATH: /volera-brand/
         run: npm run build
         # .env.production is committed and provides VITE_* vars at build time.
         # If you ever rotate the InsForge key, add VITE_INSFORGE_ANON_KEY as a
