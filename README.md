@@ -20,8 +20,9 @@ npm run preview
 
 ## النشر على GitHub Pages
 
-1. في المستودع: **Settings → Pages → Build and deployment → Source**: اختر **GitHub Actions**.
-2. عند كل دفع إلى فرع `main` يعمل سير العمل `.github/workflows/deploy-pages.yml` ويبني الموقع وينشره.
-3. الرابط يكون بالشكل: `https://mahmoudazeezeh.github.io/volera-brand/`
+1. **Settings → Pages → Build and deployment → Source:** اختر **GitHub Actions** (ليس Deploy from a branch).
+2. إن ظهرت بيئة `github-pages` مع **مطلوب موافقون**: إزالة القيد من **Settings → Environments → github-pages** أو الموافقة على النشر.
+3. ادفع إلى `main` أو نفّذ يدوياً: **Actions → Deploy site to GitHub Pages → Run workflow**.
+4. الرابط: `https://mahmoudazeezeh.github.io/volera-brand/`
 
-> مسار الإنتاج مضبوط على `/volera-brand/` في `vite.config.ts` ليتوافق مع GitHub Pages. للنشر على نطاق جذر (مثل Vercel) غيّر `base` إلى `'/'`.
+> مسار الإنتاج في `vite.config.ts` هو `/volera-brand/`. للنشر على جذر النطاق غيّر `base` إلى `'/'`.
