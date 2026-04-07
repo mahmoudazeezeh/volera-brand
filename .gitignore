@@ -21,3 +21,6 @@ dist-ssr
 *.sln
 *.sw?
 .env
+# .env.production IS committed on purpose — it contains only the public InsForge
+# anon key (equivalent to Supabase's public anon key, safe to expose).
+!.env.production

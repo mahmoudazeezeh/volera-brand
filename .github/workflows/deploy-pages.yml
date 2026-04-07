@@ -1,5 +1,6 @@
-# نشر عبر فرع gh-pages — لا يعتمد على "GitHub Actions" كمصدر في إعدادات Pages
-# (يتفادى خطأ Get Pages site failed / Not Found عندما لا يُفعّل مصدر Actions)
+# Deploy built files to gh-pages branch
+# GitHub Pages source must be set to: Branch → gh-pages → / (root)
+# Repo Settings → Pages → Source → Deploy from a branch → gh-pages → / (root)
 name: Deploy site to GitHub Pages
 
 on:
@@ -7,8 +8,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
-permissions:
-  contents: read
+# Fix Node.js 20 deprecation for action runners (effective until June 2026 deadline)
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 concurrency:
   group: pages
@@ -18,22 +20,34 @@ jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
+      contents: write   # required by peaceiris/actions-gh-pages to push gh-pages branch
 
-      - uses: actions/setup-node@v4
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22 (LTS)
+        uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
 
-      - run: npm ci
-      - run: npm run build
+      - name: Install dependencies
+        run: npm ci
 
-      - name: SPA fallback for client-side routes
+      - name: Build (Vite)
+        run: npm run build
+        # .env.production is committed and provides VITE_* vars at build time.
+        # If you ever rotate the InsForge key, add VITE_INSFORGE_ANON_KEY as a
+        # GitHub Actions secret and uncomment the lines below instead.
+        # env:
+        #   VITE_INSFORGE_URL: ${{ secrets.VITE_INSFORGE_URL }}
+        #   VITE_INSFORGE_ANON_KEY: ${{ secrets.VITE_INSFORGE_ANON_KEY }}
+
+      - name: SPA fallback — copy index.html → 404.html
         run: cp dist/index.html dist/404.html
 
-      - name: Push dist to gh-pages branch
+      - name: Push dist/ to gh-pages branch
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
