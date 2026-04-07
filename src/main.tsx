@@ -9,9 +9,11 @@ import { WishlistProvider } from './context/WishlistContext';
 import './lib/insforgeClient';
 import './index.css';
 
+const routerBasename = import.meta.env.BASE_URL.replace(/\/$/, '') || undefined;
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <BrowserRouter>
+    <BrowserRouter basename={routerBasename}>
       <AuthProvider>
         <WishlistProvider>
           <CatalogProvider>
