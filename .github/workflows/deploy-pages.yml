@@ -1,5 +1,5 @@
-# بناء ونشر في job واحد لتفادي أخطاء "artifact not found" بين jobs.
-# يتطلب: Settings → Pages → Source: GitHub Actions
+# نشر عبر فرع gh-pages — لا يعتمد على "GitHub Actions" كمصدر في إعدادات Pages
+# (يتفادى خطأ Get Pages site failed / Not Found عندما لا يُفعّل مصدر Actions)
 name: Deploy site to GitHub Pages
 
 on:
@@ -9,19 +9,16 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: pages
   cancel-in-progress: false
 
 jobs:
-  deploy:
+  build-and-deploy:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -36,11 +33,9 @@ jobs:
       - name: SPA fallback for client-side routes
         run: cp dist/index.html dist/404.html
 
-      - uses: actions/configure-pages@v4
-
-      - uses: actions/upload-pages-artifact@v3
+      - name: Push dist to gh-pages branch
+        uses: peaceiris/actions-gh-pages@v4
         with:
-          path: dist
-
-      - id: deployment
-        uses: actions/deploy-pages@v4
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist
+          force_orphan: true
