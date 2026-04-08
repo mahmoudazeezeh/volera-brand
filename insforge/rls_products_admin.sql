@@ -83,6 +83,16 @@ BEGIN
     RETURN u;
   END IF;
 
+  -- PostgREST يضع أحياناً كل claim في GUC منفصل (مثل request.jwt.claim.sub)
+  BEGIN
+    sub := NULLIF(trim(current_setting('request.jwt.claim.sub', true)), '');
+    IF sub IS NOT NULL THEN
+      RETURN sub;
+    END IF;
+  EXCEPTION WHEN OTHERS THEN
+    NULL;
+  END;
+
   claims := public.volera_jwt_claims();
 
   sub := NULLIF(trim(claims ->> 'sub'), '');
@@ -97,6 +107,9 @@ BEGIN
   IF sub IS NOT NULL THEN RETURN sub; END IF;
 
   sub := NULLIF(trim(claims #>> '{user_id}'), '');
+  IF sub IS NOT NULL THEN RETURN sub; END IF;
+
+  sub := NULLIF(trim(claims #>> '{app_metadata,sub}'), '');
   IF sub IS NOT NULL THEN RETURN sub; END IF;
 
   RETURN NULL;
@@ -133,10 +146,19 @@ DECLARE
   uid text;
   claims jsonb;
   jwt_role text;
+  email_from_setting text;
 BEGIN
+  BEGIN
+    jwt_role := lower(trim(coalesce(current_setting('request.jwt.claim.role', true), '')));
+    IF jwt_role = 'project_admin' THEN
+      RETURN true;
+    END IF;
+  EXCEPTION WHEN OTHERS THEN
+    NULL;
+  END;
+
   claims := public.volera_jwt_claims();
 
-  -- رمز مشروع InsForge (JWT موقّع من المنصة فقط — لا يضعه المستخدم يدوياً)
   jwt_role := lower(trim(coalesce(claims ->> 'role', '')));
   IF jwt_role = 'project_admin' THEN
     RETURN true;
@@ -147,15 +169,24 @@ BEGIN
     RETURN false;
   END IF;
 
-  claim_email := lower(trim(coalesce(
-    claims ->> 'email',
-    claims #>> '{user,email}',
-    claims -> 'user' ->> 'email',
-    claims -> 'user' ->> 'Email',
-    claims -> 'user_metadata' ->> 'email',
-    claims -> 'app_metadata' ->> 'email',
-    ''
-  )));
+  BEGIN
+    email_from_setting := lower(trim(coalesce(current_setting('request.jwt.claim.email', true), '')));
+  EXCEPTION WHEN OTHERS THEN
+    email_from_setting := '';
+  END;
+
+  claim_email := email_from_setting;
+  IF claim_email = '' THEN
+    claim_email := lower(trim(coalesce(
+      claims ->> 'email',
+      claims #>> '{user,email}',
+      claims -> 'user' ->> 'email',
+      claims -> 'user' ->> 'Email',
+      claims -> 'user_metadata' ->> 'email',
+      claims -> 'app_metadata' ->> 'email',
+      ''
+    )));
+  END IF;
 
   IF claim_email <> '' AND claim_email = lower(trim(volera_admin_email)) THEN
     RETURN true;

@@ -8,6 +8,8 @@ import {
 
 type TokenManagerLike = {
   saveSession: (s: { accessToken: string; user: UserSchema }) => void;
+  getSession: () => { accessToken: string; user: UserSchema } | null;
+  getAccessToken: () => string | null;
   getUser: () => UserSchema | null;
   setAccessToken: (token: string) => void;
 };
@@ -32,6 +34,34 @@ export function syncInsforgeAccessTokenForDatabase(accessToken: string, userHint
   }
 }
 
+type HttpClientUserToken = { userToken: string | null };
+
+/**
+ * طبقة PostgREST في الـ SDK تبني الترويسة كالتالي: `tokenManager.getAccessToken() || HttpClient.userToken`.
+ * إذا بقي access token قديماً في TokenManager بينما `setAuthToken` ضبط قيمة أحدث، تُستخدم القيمة القديمة
+ * لطلبات الجداول. نعيد المحاذاة قبل العمليات الحساسة.
+ */
+export function reconcileInsforgeDatabaseAuth(): void {
+  const tm = getTokenManager();
+  const http = insforge.getHttpClient() as unknown as HttpClientUserToken;
+  const tmToken = tm.getAccessToken();
+  const userToken = http.userToken;
+
+  if (tmToken === userToken) return;
+
+  let canonical: string | null;
+  if (userToken && tmToken && userToken !== tmToken) {
+    canonical = userToken;
+  } else {
+    canonical = userToken || tmToken;
+  }
+  if (!canonical) return;
+
+  const sess = tm.getSession();
+  const user = sess?.user ?? tm.getUser() ?? undefined;
+  syncInsforgeAccessTokenForDatabase(canonical, user ?? null);
+}
+
 export function isLikelyInvalidTokenMessage(message: unknown): boolean {
   const m = String(message ?? '').toLowerCase();
   return (
@@ -47,6 +77,8 @@ export function isLikelyInvalidTokenMessage(message: unknown): boolean {
  * نحدّث الجلسة صراحةً قبل عمليات الإدارة، ونستخدم refresh_token المحفوظ عند فشل الكوكيز (نطاق مختلف مثل Vercel ↔ InsForge).
  */
 export async function ensureValidInsforgeAccessToken(): Promise<void> {
+  reconcileInsforgeDatabaseAuth();
+
   const { data, error } = await insforge.auth.refreshSession();
   if (!error && data?.accessToken) {
     persistRefreshTokenFromAuthPayload(data);

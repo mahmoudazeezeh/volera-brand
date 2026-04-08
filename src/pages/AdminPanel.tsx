@@ -31,6 +31,7 @@ import {
 import HeroSlidesAdminTab from '../components/admin/HeroSlidesAdminTab';
 import VoleraLogo from '../components/VoleraLogo';
 import { enhanceAdminDbErrorMessage } from '../lib/adminDbMessages';
+import { ensureValidInsforgeAccessToken } from '../lib/insforgeSession';
 
 const PLACEHOLDER_IMAGE =
   'https://placehold.co/600x600/111111/D4AF37/png?text=VOLERA';
@@ -40,6 +41,11 @@ type Tab = 'overview' | 'products' | 'orders' | 'zones' | 'hero';
 export default function AdminPanel() {
   const { ready, user, isAdmin } = useAuth();
   const { refetch: refetchCatalog } = useCatalog();
+
+  useEffect(() => {
+    if (!ready || !isAdmin) return;
+    void ensureValidInsforgeAccessToken();
+  }, [ready, isAdmin]);
 
   const [tab, setTab] = useState<Tab>('overview');
   const [stats, setStats] = useState({ totalUsers: 0, totalOrders: 0, pendingOrders: 0, totalProducts: 0 });
