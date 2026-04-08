@@ -9,6 +9,7 @@ import {
 } from 'react';
 import type { UserSchema } from '@insforge/sdk';
 import { insforge } from '../lib/insforgeClient';
+import { persistInsforgeRefreshToken, persistRefreshTokenFromAuthPayload } from '../lib/insforgeAuthStorage';
 import { ADMIN_EMAIL } from '../config/volera';
 import { fetchProfile, type VoleraProfile } from '../lib/profileApi';
 
@@ -76,6 +77,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signIn = useCallback(async (email: string, password: string) => {
     const { data, error } = await insforge.auth.signInWithPassword({ email, password });
     if (error) return { error: error as Error };
+    persistRefreshTokenFromAuthPayload(data);
     if (data?.user) {
       setUser(data.user);
       const { data: p } = await fetchProfile(data.user.id);
@@ -98,6 +100,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         redirectTo: params.redirectTo,
       });
       if (error) return { error: error as Error };
+      persistRefreshTokenFromAuthPayload(data);
       return {
         error: null,
         requireEmailVerification: Boolean(data?.requireEmailVerification),
@@ -109,6 +112,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const verifyEmail = useCallback(async (email: string, otp: string) => {
     const { data, error } = await insforge.auth.verifyEmail({ email, otp });
     if (error) return { error: error as Error };
+    persistRefreshTokenFromAuthPayload(data);
     const u = data?.user;
     if (u) {
       setUser(u);
@@ -120,6 +124,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = useCallback(async () => {
     await insforge.auth.signOut();
+    persistInsforgeRefreshToken(null);
     setUser(null);
     setProfile(null);
   }, []);

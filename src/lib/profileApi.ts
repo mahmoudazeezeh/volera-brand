@@ -11,12 +11,12 @@ export type VoleraProfile = {
 };
 
 /**
- * بعد أول تسجيل للمشرف، نفّذ في InsForge (SQL):
+ * بعد أول تسجيل للمشرف، نفّذ في InsForge (SQL) — أو حدّث insforge/rls_products_admin.sql ليطابق ADMIN_EMAIL:
  * UPDATE public.volera_profiles SET role = 'admin', account_status = 'active'
  * WHERE lower(email) = lower('mahmmoadaziza@gmail.com');
  *
- * لإضافة/تعديل/حذف المنتجات من لوحة التحكم، نفّذ أيضاً الملف:
- * insforge/rls_products_admin.sql (سياسات RLS لجدولي products و product_images).
+ * لإضافة/تعديل/حذف المنتجات من لوحة التحكم، نفّذ (أعد تنفيذه بعد كل تعديل على الدالة):
+ * insforge/rls_products_admin.sql (RLS + دالة volera_is_admin لجدولي products و product_images).
  */
 export async function fetchProfile(userId: string) {
   const { data, error } = await insforge.database

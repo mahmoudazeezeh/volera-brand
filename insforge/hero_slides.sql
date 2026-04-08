@@ -1,4 +1,5 @@
 -- نفّذ هذا في InsForge → SQL مرة واحدة لتمكين سلايدر الصفحة الرئيسية
+-- مهم: شغّل أولاً insforge/rls_products_admin.sql لإنشاء الدالة public.volera_is_admin (صلاحيات المشرف)
 CREATE TABLE IF NOT EXISTS public.hero_slides (
   id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   image_url text NOT NULL,
@@ -20,12 +21,9 @@ CREATE POLICY hero_slides_public_read ON public.hero_slides
   FOR SELECT USING (active = true);
 
 CREATE POLICY hero_slides_admin_all ON public.hero_slides
-  FOR ALL USING (
-    EXISTS (
-      SELECT 1 FROM public.volera_profiles vp
-      WHERE vp.id = auth.uid()::text AND vp.role = 'admin'
-    )
-  );
+  FOR ALL
+  USING (public.volera_is_admin())
+  WITH CHECK (public.volera_is_admin());
 
 -- إدراج افتراضي (اختياري — نفّذ مرة واحدة إن كان الجدول فارغاً؛ المسارات من مجلد public في الموقع)
 -- إن وُجدت شرائح قديمة، احذفها أو حدّث image_url يدوياً.

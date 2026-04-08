@@ -1,4 +1,12 @@
 import { insforge } from './insforgeClient';
+import { ensureValidInsforgeAccessToken, isLikelyInvalidTokenMessage } from './insforgeSession';
+
+function dbErr(e: unknown): string {
+  if (e && typeof e === 'object' && 'message' in e && typeof (e as { message: unknown }).message === 'string') {
+    return (e as { message: string }).message;
+  }
+  return String(e);
+}
 
 export type HeroSlide = {
   id: number;
@@ -52,10 +60,14 @@ export async function fetchAllHeroSlidesAdmin(): Promise<{
   data: HeroSlide[];
   error: Error | null;
 }> {
-  const { data, error } = await insforge.database
-    .from('hero_slides')
-    .select('*')
-    .order('sort_order', { ascending: true });
+  await ensureValidInsforgeAccessToken();
+  const q = () =>
+    insforge.database.from('hero_slides').select('*').order('sort_order', { ascending: true });
+  let { data, error } = await q();
+  if (error && isLikelyInvalidTokenMessage(dbErr(error))) {
+    await ensureValidInsforgeAccessToken();
+    ({ data, error } = await q());
+  }
   if (error) return { data: [], error: error as Error };
   return { data: (data as HeroSlide[]) ?? [], error: null };
 }
@@ -69,20 +81,28 @@ export async function insertHeroSlide(row: {
   sort_order?: number;
   active?: boolean;
 }): Promise<{ ok: true; id: number } | { ok: false; error: string }> {
-  const { data, error } = await insforge.database
-    .from('hero_slides')
-    .insert([
-      {
-        image_url: row.image_url,
-        headline_ar: row.headline_ar ?? null,
-        subline_ar: row.subline_ar ?? null,
-        cta_label_ar: row.cta_label_ar ?? 'اكتشف المجموعة',
-        cta_href: row.cta_href ?? '#products',
-        sort_order: row.sort_order ?? 0,
-        active: row.active ?? true,
-      },
-    ])
-    .select('id');
+  await ensureValidInsforgeAccessToken();
+  const doInsert = () =>
+    insforge.database
+      .from('hero_slides')
+      .insert([
+        {
+          image_url: row.image_url,
+          headline_ar: row.headline_ar ?? null,
+          subline_ar: row.subline_ar ?? null,
+          cta_label_ar: row.cta_label_ar ?? 'اكتشف المجموعة',
+          cta_href: row.cta_href ?? '#products',
+          sort_order: row.sort_order ?? 0,
+          active: row.active ?? true,
+        },
+      ])
+      .select('id');
+
+  let { data, error } = await doInsert();
+  if (error && isLikelyInvalidTokenMessage(dbErr(error))) {
+    await ensureValidInsforgeAccessToken();
+    ({ data, error } = await doInsert());
+  }
 
   if (error) return { ok: false, error: (error as Error).message };
   const r = Array.isArray(data) ? data[0] : data;
@@ -100,13 +120,25 @@ export async function updateHeroSlide(
     >
   >
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const { error } = await insforge.database.from('hero_slides').update(patch).eq('id', id);
+  await ensureValidInsforgeAccessToken();
+  const run = () => insforge.database.from('hero_slides').update(patch).eq('id', id);
+  let { error } = await run();
+  if (error && isLikelyInvalidTokenMessage(dbErr(error))) {
+    await ensureValidInsforgeAccessToken();
+    ({ error } = await run());
+  }
   if (error) return { ok: false, error: (error as Error).message };
   return { ok: true };
 }
 
 export async function deleteHeroSlide(id: number): Promise<{ ok: true } | { ok: false; error: string }> {
-  const { error } = await insforge.database.from('hero_slides').delete().eq('id', id);
+  await ensureValidInsforgeAccessToken();
+  const run = () => insforge.database.from('hero_slides').delete().eq('id', id);
+  let { error } = await run();
+  if (error && isLikelyInvalidTokenMessage(dbErr(error))) {
+    await ensureValidInsforgeAccessToken();
+    ({ error } = await run());
+  }
   if (error) return { ok: false, error: (error as Error).message };
   return { ok: true };
 }

@@ -1,6 +1,14 @@
 import { insforge } from './insforgeClient';
 import type { Product } from '../types/Product';
 import { fetchProducts } from './productApi';
+import { ensureValidInsforgeAccessToken, isLikelyInvalidTokenMessage } from './insforgeSession';
+
+function dbErr(e: unknown): string {
+  if (e && typeof e === 'object' && 'message' in e && typeof (e as { message: unknown }).message === 'string') {
+    return (e as { message: string }).message;
+  }
+  return String(e);
+}
 
 export const PRODUCT_IMAGES_BUCKET = 'product-images';
 
@@ -36,14 +44,22 @@ export async function fetchAdminStats(): Promise<{
   totalProducts: number;
   error: Error | null;
 }> {
+  await ensureValidInsforgeAccessToken();
   const head = { count: 'exact' as const, head: true };
-  const [u, o, pend, pr] = await Promise.all([
-    insforge.database.from('volera_profiles').select('id', head),
-    insforge.database.from('orders').select('id', head),
-    insforge.database.from('orders').select('id', head).eq('status', 'pending'),
-    insforge.database.from('products').select('id', head),
-  ]);
-  const err = (u.error ?? o.error ?? pend.error ?? pr.error) as Error | null;
+  const run = () =>
+    Promise.all([
+      insforge.database.from('volera_profiles').select('id', head),
+      insforge.database.from('orders').select('id', head),
+      insforge.database.from('orders').select('id', head).eq('status', 'pending'),
+      insforge.database.from('products').select('id', head),
+    ]);
+  let [u, o, pend, pr] = await run();
+  let err = (u.error ?? o.error ?? pend.error ?? pr.error) as Error | null;
+  if (err && isLikelyInvalidTokenMessage(dbErr(err))) {
+    await ensureValidInsforgeAccessToken();
+    [u, o, pend, pr] = await run();
+    err = (u.error ?? o.error ?? pend.error ?? pr.error) as Error | null;
+  }
   return {
     totalUsers: u.count ?? 0,
     totalOrders: o.count ?? 0,
@@ -57,10 +73,14 @@ export async function fetchAdminOrders(): Promise<{
   data: AdminOrder[];
   error: Error | null;
 }> {
-  const { data: orders, error: oErr } = await insforge.database
-    .from('orders')
-    .select('*')
-    .order('id', { ascending: false });
+  await ensureValidInsforgeAccessToken();
+  const q = () =>
+    insforge.database.from('orders').select('*').order('id', { ascending: false });
+  let { data: orders, error: oErr } = await q();
+  if (oErr && isLikelyInvalidTokenMessage(dbErr(oErr))) {
+    await ensureValidInsforgeAccessToken();
+    ({ data: orders, error: oErr } = await q());
+  }
 
   if (oErr) {
     return { data: [], error: oErr as Error };
@@ -90,7 +110,13 @@ export async function updateOrderStatus(
   orderId: number,
   status: OrderStatus
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const { error } = await insforge.database.from('orders').update({ status }).eq('id', orderId);
+  await ensureValidInsforgeAccessToken();
+  const run = () => insforge.database.from('orders').update({ status }).eq('id', orderId);
+  let { error } = await run();
+  if (error && isLikelyInvalidTokenMessage(dbErr(error))) {
+    await ensureValidInsforgeAccessToken();
+    ({ error } = await run());
+  }
   if (error) return { ok: false, error: (error as Error).message };
   return { ok: true };
 }
@@ -99,11 +125,18 @@ export async function fetchProductImages(productId: number): Promise<{
   data: ProductImageRow[];
   error: Error | null;
 }> {
-  const { data, error } = await insforge.database
-    .from('product_images')
-    .select('*')
-    .eq('product_id', productId)
-    .order('sort_order', { ascending: true });
+  await ensureValidInsforgeAccessToken();
+  const q = () =>
+    insforge.database
+      .from('product_images')
+      .select('*')
+      .eq('product_id', productId)
+      .order('sort_order', { ascending: true });
+  let { data, error } = await q();
+  if (error && isLikelyInvalidTokenMessage(dbErr(error))) {
+    await ensureValidInsforgeAccessToken();
+    ({ data, error } = await q());
+  }
   if (error) return { data: [], error: error as Error };
   return { data: (data as ProductImageRow[]) ?? [], error: null };
 }
@@ -134,6 +167,7 @@ export async function uploadProductImage(
   if (!isLikelyImageFile(file)) {
     return { ok: false, error: 'الملف المختار ليس صورة. اختر ملفاً من معرض الصور.' };
   }
+  await ensureValidInsforgeAccessToken();
   const ext = extFromFile(file);
   const key = `p${productId}/${crypto.randomUUID()}.${ext}`;
   const { data: up, error: upErr } = await insforge.storage
@@ -143,54 +177,66 @@ export async function uploadProductImage(
     return { ok: false, error: upErr?.message ?? 'فشل رفع الصورة' };
   }
 
-  const { data: existing } = await insforge.database
-    .from('product_images')
-    .select('sort_order')
-    .eq('product_id', productId)
-    .order('sort_order', { ascending: false })
-    .limit(1);
+  const finishDbAfterUpload = async (): Promise<{ ok: true } | { ok: false; error: string }> => {
+    const { data: existing } = await insforge.database
+      .from('product_images')
+      .select('sort_order')
+      .eq('product_id', productId)
+      .order('sort_order', { ascending: false })
+      .limit(1);
 
-  const nextOrder =
-    Array.isArray(existing) && existing[0] && typeof (existing[0] as { sort_order: number }).sort_order === 'number'
-      ? (existing[0] as { sort_order: number }).sort_order + 1
-      : 0;
+    const nextOrder =
+      Array.isArray(existing) && existing[0] && typeof (existing[0] as { sort_order: number }).sort_order === 'number'
+        ? (existing[0] as { sort_order: number }).sort_order + 1
+        : 0;
 
-  const { error: insErr } = await insforge.database.from('product_images').insert([
-    {
-      product_id: productId,
-      storage_key: up.key,
-      url: up.url,
-      sort_order: nextOrder,
-    },
-  ]);
+    const { error: insErr } = await insforge.database.from('product_images').insert([
+      {
+        product_id: productId,
+        storage_key: up.key,
+        url: up.url,
+        sort_order: nextOrder,
+      },
+    ]);
 
-  if (insErr) {
-    await insforge.storage.from(PRODUCT_IMAGES_BUCKET).remove(up.key).catch(() => {});
-    return { ok: false, error: (insErr as Error).message };
+    if (insErr) return { ok: false, error: dbErr(insErr) };
+
+    const { data: first } = await insforge.database
+      .from('product_images')
+      .select('url')
+      .eq('product_id', productId)
+      .order('sort_order', { ascending: true })
+      .limit(1);
+    const primary =
+      Array.isArray(first) && first[0] && typeof (first[0] as { url: string }).url === 'string'
+        ? (first[0] as { url: string }).url
+        : up.url;
+
+    const { data: imgs } = await insforge.database
+      .from('product_images')
+      .select('url')
+      .eq('product_id', productId)
+      .order('sort_order', { ascending: true });
+    const urls = ((imgs as { url: string }[]) ?? []).map((r) => r.url);
+
+    const { error: updErr } = await insforge.database
+      .from('products')
+      .update({ image: primary, images: urls.length ? urls : [primary] })
+      .eq('id', productId);
+    if (updErr) return { ok: false, error: dbErr(updErr) };
+    return { ok: true };
+  };
+
+  let dbResult = await finishDbAfterUpload();
+  if (!dbResult.ok && isLikelyInvalidTokenMessage(dbResult.error)) {
+    await ensureValidInsforgeAccessToken();
+    dbResult = await finishDbAfterUpload();
   }
 
-  const { data: first } = await insforge.database
-    .from('product_images')
-    .select('url')
-    .eq('product_id', productId)
-    .order('sort_order', { ascending: true })
-    .limit(1);
-  const primary =
-    Array.isArray(first) && first[0] && typeof (first[0] as { url: string }).url === 'string'
-      ? (first[0] as { url: string }).url
-      : up.url;
-
-  const { data: imgs } = await insforge.database
-    .from('product_images')
-    .select('url')
-    .eq('product_id', productId)
-    .order('sort_order', { ascending: true });
-  const urls = ((imgs as { url: string }[]) ?? []).map((r) => r.url);
-
-  await insforge.database
-    .from('products')
-    .update({ image: primary, images: urls.length ? urls : [primary] })
-    .eq('id', productId);
+  if (!dbResult.ok) {
+    await insforge.storage.from(PRODUCT_IMAGES_BUCKET).remove(up.key).catch(() => {});
+    return { ok: false, error: dbResult.error };
+  }
 
   return { ok: true, url: up.url };
 }
@@ -202,6 +248,7 @@ export async function uploadHeroBannerFile(
   if (!isLikelyImageFile(file)) {
     return { ok: false, error: 'الملف المختار ليس صورة.' };
   }
+  await ensureValidInsforgeAccessToken();
   const ext = extFromFile(file);
   const key = `hero/${crypto.randomUUID()}.${ext}`;
   const { data: up, error: upErr } = await insforge.storage
@@ -214,6 +261,7 @@ export async function uploadHeroBannerFile(
 }
 
 export async function syncProductImagesFromGallery(productId: number): Promise<void> {
+  await ensureValidInsforgeAccessToken();
   const { data: imgs } = await insforge.database
     .from('product_images')
     .select('url')
@@ -235,7 +283,13 @@ export async function deleteProductImage(
   storageKey: string,
   productId: number
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const { error: dErr } = await insforge.database.from('product_images').delete().eq('id', imageId);
+  await ensureValidInsforgeAccessToken();
+  const del = () => insforge.database.from('product_images').delete().eq('id', imageId);
+  let { error: dErr } = await del();
+  if (dErr && isLikelyInvalidTokenMessage(dbErr(dErr))) {
+    await ensureValidInsforgeAccessToken();
+    ({ error: dErr } = await del());
+  }
   if (dErr) return { ok: false, error: (dErr as Error).message };
   await insforge.storage.from(PRODUCT_IMAGES_BUCKET).remove(storageKey).catch(() => {});
   await syncProductImagesFromGallery(productId);
@@ -261,28 +315,36 @@ export type AdminProductInsert = {
 export async function adminInsertProduct(
   row: AdminProductInsert
 ): Promise<{ ok: true; id: number } | { ok: false; error: string }> {
+  await ensureValidInsforgeAccessToken();
   const images = row.images?.length ? row.images : [row.image];
-  const { data, error } = await insforge.database
-    .from('products')
-    .insert([
-      {
-        name: row.name.trim(),
-        name_ar: row.name_ar.trim(),
-        price: row.price,
-        discount: row.discount ?? 0,
-        image: row.image,
-        category: row.category,
-        description: row.description.trim(),
-        description_ar: row.description_ar.trim(),
-        sizes: ['50 مل'],
-        images,
-        is_featured: row.is_featured ?? false,
-        stock_quantity: row.stock_quantity,
-        low_stock_threshold: row.low_stock_threshold ?? 5,
-        size_ml: row.size_ml ?? '50 ml',
-      },
-    ])
-    .select('id');
+  const doInsert = () =>
+    insforge.database
+      .from('products')
+      .insert([
+        {
+          name: row.name.trim(),
+          name_ar: row.name_ar.trim(),
+          price: row.price,
+          discount: row.discount ?? 0,
+          image: row.image,
+          category: row.category,
+          description: row.description.trim(),
+          description_ar: row.description_ar.trim(),
+          sizes: ['50 مل'],
+          images,
+          is_featured: row.is_featured ?? false,
+          stock_quantity: row.stock_quantity,
+          low_stock_threshold: row.low_stock_threshold ?? 5,
+          size_ml: row.size_ml ?? '50 ml',
+        },
+      ])
+      .select('id');
+
+  let { data, error } = await doInsert();
+  if (error && isLikelyInvalidTokenMessage(dbErr(error))) {
+    await ensureValidInsforgeAccessToken();
+    ({ data, error } = await doInsert());
+  }
 
   if (error) return { ok: false, error: (error as Error).message };
   const r = Array.isArray(data) ? data[0] : data;
@@ -310,7 +372,13 @@ export async function adminUpdateProduct(
     >
   > & { images?: string[] }
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const { error } = await insforge.database.from('products').update(patch).eq('id', id);
+  await ensureValidInsforgeAccessToken();
+  const run = () => insforge.database.from('products').update(patch).eq('id', id);
+  let { error } = await run();
+  if (error && isLikelyInvalidTokenMessage(dbErr(error))) {
+    await ensureValidInsforgeAccessToken();
+    ({ error } = await run());
+  }
   if (error) return { ok: false, error: (error as Error).message };
   return { ok: true };
 }
@@ -318,6 +386,7 @@ export async function adminUpdateProduct(
 export async function adminDeleteProduct(
   id: number
 ): Promise<{ ok: true } | { ok: false; error: string }> {
+  await ensureValidInsforgeAccessToken();
   const { data: imgs } = await insforge.database.from('product_images').select('storage_key').eq('product_id', id);
   const keys = ((imgs as { storage_key: string }[]) ?? []).map((x) => x.storage_key).filter(Boolean);
   if (keys.length) {
@@ -332,5 +401,6 @@ export async function adminDeleteProduct(
 }
 
 export async function fetchAdminProducts(): Promise<{ data: Product[]; error: Error | null }> {
+  await ensureValidInsforgeAccessToken();
   return fetchProducts();
 }

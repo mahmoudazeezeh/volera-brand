@@ -1,4 +1,5 @@
 import { createClient } from '@insforge/sdk';
+import { readStoredInsforgeRefreshToken } from './insforgeAuthStorage';
 
 const baseUrl = import.meta.env.VITE_INSFORGE_URL;
 const anonKey = import.meta.env.VITE_INSFORGE_ANON_KEY;
@@ -13,3 +14,8 @@ export const insforge = createClient({
   baseUrl,
   anonKey,
 });
+
+const storedRt = readStoredInsforgeRefreshToken();
+if (storedRt) {
+  insforge.getHttpClient().setRefreshToken(storedRt);
+}

@@ -5,8 +5,9 @@
 -- الخطأ: "new row violates row-level security policy for table 'products'"
 -- يعني أن سياسات INSERT/UPDATE غير مفعّلة للمستخدم المسجّل كمشرف.
 --
--- شرط: سجل المستخدم في volera_profiles يجب أن يكون role = 'admin' و account_status = 'active'
--- (انظر تعليقات src/lib/profileApi.ts).
+-- المشرف يُعتبر مسموحاً إذا تحقق أحد الشرطين (مثل src/context/AuthContext + src/config/volera.ts):
+-- 1) البريد في JWT يطابق ADMIN_EMAIL (السطر volera_admin_email أدناه — حدّثه عند تغيير البريد في volera.ts)
+-- 2) أو سجل volera_profiles: role = 'admin' وحالة حساب نشطة أو قيد التحقق
 -- =============================================================================
 
 -- دالة آمنة تتحقق من دور المشرف (تقرأ volera_profiles بصلاحية المالك لتجاوز RLS على الملفات الشخصية)
@@ -17,10 +18,24 @@ STABLE
 SECURITY DEFINER
 SET search_path = public
 AS $$
+DECLARE
+  volera_admin_email constant text := 'mahmmoadaziza@gmail.com';
+  claim_email text;
 BEGIN
-  -- Supabase / InsForge: معرّف المستخدم من JWT
+  -- بدون مستخدم JWT لا يُسمح بعمليات المشرف
   IF auth.uid() IS NULL THEN
     RETURN false;
+  END IF;
+
+  -- مطابقة لوحة التحكم: نفس البريد الافتراضي للمشرف في التطبيق (ADMIN_EMAIL)
+  claim_email := lower(trim(coalesce(
+    auth.jwt() ->> 'email',
+    auth.jwt() -> 'user' ->> 'email',
+    auth.jwt() -> 'user_metadata' ->> 'email',
+    ''
+  )));
+  IF claim_email <> '' AND claim_email = lower(trim(volera_admin_email)) THEN
+    RETURN true;
   END IF;
 
   RETURN EXISTS (
@@ -28,7 +43,7 @@ BEGIN
     FROM public.volera_profiles vp
     WHERE vp.id::text = auth.uid()::text
       AND vp.role = 'admin'
-      AND vp.account_status = 'active'
+      AND vp.account_status IN ('active', 'pending_verification')
   );
 END;
 $$;
@@ -54,23 +69,21 @@ CREATE POLICY "products_select_public"
   FOR SELECT
   USING (true);
 
+-- بدون TO: تطبّق على أي دور يُرسل الطلب؛ WITH CHECK يمنع غير المشرف (auth.uid() فارغ = رفض)
 CREATE POLICY "products_admin_insert"
   ON public.products
   FOR INSERT
-  TO authenticated
   WITH CHECK (public.volera_is_admin());
 
 CREATE POLICY "products_admin_update"
   ON public.products
   FOR UPDATE
-  TO authenticated
   USING (public.volera_is_admin())
   WITH CHECK (public.volera_is_admin());
 
 CREATE POLICY "products_admin_delete"
   ON public.products
   FOR DELETE
-  TO authenticated
   USING (public.volera_is_admin());
 
 -- ---------------------------------------------------------------------------
@@ -92,20 +105,17 @@ CREATE POLICY "product_images_select_public"
 CREATE POLICY "product_images_admin_insert"
   ON public.product_images
   FOR INSERT
-  TO authenticated
   WITH CHECK (public.volera_is_admin());
 
 CREATE POLICY "product_images_admin_update"
   ON public.product_images
   FOR UPDATE
-  TO authenticated
   USING (public.volera_is_admin())
   WITH CHECK (public.volera_is_admin());
 
 CREATE POLICY "product_images_admin_delete"
   ON public.product_images
   FOR DELETE
-  TO authenticated
   USING (public.volera_is_admin());
 
 -- =============================================================================
