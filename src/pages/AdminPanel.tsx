@@ -13,6 +13,7 @@ import {
   adminInsertProduct,
   adminUpdateProduct,
   adminDeleteProduct,
+  adminRollbackInsertedProduct,
   fetchProductImages,
   uploadProductImage,
   deleteProductImage,
@@ -580,12 +581,19 @@ function ProductEditorForm({
     }
     if (primaryLocalFile) {
       const up = await uploadProductImage(ins.id, primaryLocalFile);
-      if (!up.ok) onMessage(up.error);
+      if (!up.ok) {
+        // تراجع: حذف المنتج للتو لتجنب سجلات يتيمة
+        await adminRollbackInsertedProduct(ins.id);
+        setBusy(false);
+        onMessage(`فشل رفع الصورة: ${up.error}`);
+        return;
+      }
     }
     if (primaryPreview) URL.revokeObjectURL(primaryPreview);
     setPrimaryPreview(null);
     setPrimaryLocalFile(null);
     setBusy(false);
+    onMessage('تم حفظ المنتج بنجاح ✔️');
     await onSaved();
   }
 

@@ -353,6 +353,15 @@ export async function adminInsertProduct(
   return { ok: true, id };
 }
 
+/** حذف منتج تم إنشاؤه للتو في حال فشل رفع الصورة (rollback يدوي). */
+export async function adminRollbackInsertedProduct(id: number): Promise<void> {
+  try {
+    await insforge.database.from('products').delete().eq('id', id);
+  } catch {
+    // تجاهل الخطأ — هذا تنظيف أفضل-جهد
+  }
+}
+
 export async function adminUpdateProduct(
   id: number,
   patch: Partial<
@@ -373,7 +382,14 @@ export async function adminUpdateProduct(
   > & { images?: string[] }
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   await ensureValidInsforgeAccessToken();
-  const run = () => insforge.database.from('products').update(patch).eq('id', id);
+
+  // إذا تغيّرت الصورة الرئيسية دون تحديد مصفوفة الصور، نضيفها تلقائياً
+  const finalPatch: typeof patch = { ...patch };
+  if (finalPatch.image && !finalPatch.images?.length) {
+    finalPatch.images = [finalPatch.image];
+  }
+
+  const run = () => insforge.database.from('products').update(finalPatch).eq('id', id);
   let { error } = await run();
   if (error && isLikelyInvalidTokenMessage(dbErr(error))) {
     await ensureValidInsforgeAccessToken();
@@ -387,15 +403,38 @@ export async function adminDeleteProduct(
   id: number
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   await ensureValidInsforgeAccessToken();
-  const { data: imgs } = await insforge.database.from('product_images').select('storage_key').eq('product_id', id);
-  const keys = ((imgs as { storage_key: string }[]) ?? []).map((x) => x.storage_key).filter(Boolean);
+
+  // جلب مفاتيح الصور من قاعدة البيانات
+  const { data: imgs } = await insforge.database
+    .from('product_images')
+    .select('storage_key')
+    .eq('product_id', id);
+  const keys = ((imgs as { storage_key: string }[]) ?? [])
+    .map((x) => x.storage_key)
+    .filter(Boolean);
+
+  // حذف الصور من Storage دفعة واحدة (remove تتوقع مصفوفة)
   if (keys.length) {
-    await Promise.all(
-      keys.map((k) => insforge.storage.from(PRODUCT_IMAGES_BUCKET).remove(k))
-    ).catch(() => {});
+    await insforge.storage.from(PRODUCT_IMAGES_BUCKET).remove(keys).catch(() => {});
   }
-  await insforge.database.from('product_images').delete().eq('product_id', id);
-  const { error } = await insforge.database.from('products').delete().eq('id', id);
+
+  // حذف سجلات الصور من قاعدة البيانات
+  const doDeleteImages = () =>
+    insforge.database.from('product_images').delete().eq('product_id', id);
+  let { error: imgDelErr } = await doDeleteImages();
+  if (imgDelErr && isLikelyInvalidTokenMessage(dbErr(imgDelErr))) {
+    await ensureValidInsforgeAccessToken();
+    ({ error: imgDelErr } = await doDeleteImages());
+  }
+
+  // حذف المنتج نفسه
+  const doDeleteProduct = () =>
+    insforge.database.from('products').delete().eq('id', id);
+  let { error } = await doDeleteProduct();
+  if (error && isLikelyInvalidTokenMessage(dbErr(error))) {
+    await ensureValidInsforgeAccessToken();
+    ({ error } = await doDeleteProduct());
+  }
   if (error) return { ok: false, error: (error as Error).message };
   return { ok: true };
 }
