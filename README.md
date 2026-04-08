@@ -20,8 +20,13 @@ npm run preview
 
 ### لوحة التحكم والمنتجات (InsForge)
 
-إذا ظهر خطأ **row-level security** عند إضافة أو تعديل منتج، نفّذ في InsForge → SQL محتوى الملف **`insforge/rls_products_admin.sql`** مرة واحدة.  
-تأكد أن حسابك في **`volera_profiles`** له **`role = 'admin'`** و **`account_status = 'active'`** (انظر تعليقات `src/lib/profileApi.ts`).
+نفّذ في InsForge → SQL محتوى **`insforge/rls_products_admin.sql`** كاملاً (يحدّث سياسات **المنتجات، الصور، مناطق التوصيل، الطلبات، بنود الطلب، الملفات الشخصية**).  
+بعدها نفّذ **`insforge/hero_slides.sql`** إذا استخدمت سلايدر الإدارة.
+
+إذا غيّرت بريد المشرف في `src/config/volera.ts`، عدّل القيمة **`volera_admin_email`** داخل الدالة في نفس ملف SQL.  
+للصلاحية: **`volera_profiles.role = 'admin'`** و **`account_status = 'active'`** (أو بريد يطابق `ADMIN_EMAIL` وفق منطق الدالة).
+
+للتحقق المحلي من الكود: `npm run verify`
 
 ## النشر على GitHub Pages
 

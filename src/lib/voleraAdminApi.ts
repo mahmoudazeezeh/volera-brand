@@ -413,9 +413,8 @@ export async function adminDeleteProduct(
     .map((x) => x.storage_key)
     .filter(Boolean);
 
-  // حذف الصور من Storage دفعة واحدة (remove تتوقع مصفوفة)
   if (keys.length) {
-    await insforge.storage.from(PRODUCT_IMAGES_BUCKET).remove(keys).catch(() => {});
+    await Promise.all(keys.map((k) => insforge.storage.from(PRODUCT_IMAGES_BUCKET).remove(k))).catch(() => {});
   }
 
   // حذف سجلات الصور من قاعدة البيانات

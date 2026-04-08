@@ -250,8 +250,7 @@ describe('adminDeleteProduct', () => {
     const r = await adminDeleteProduct(1);
 
     expect(r).toEqual({ ok: true });
-    // تحقق أن remove استُدعي بمصفوفة وليس بقيمة فردية
-    expect(mockRemove).toHaveBeenCalledWith(['p1/abc.jpg']);
+    expect(mockRemove).toHaveBeenCalledWith('p1/abc.jpg');
   });
 
   it('✅ يحذف المنتج حتى لو لم تكن له صور في Storage', async () => {
@@ -341,9 +340,10 @@ describe('adminDeleteProduct', () => {
     const r = await adminDeleteProduct(5);
 
     expect(r).toEqual({ ok: true });
-    // يجب أن يُستدعى مرة واحدة فقط بالمصفوفة كاملة
-    expect(mockRemove).toHaveBeenCalledTimes(1);
-    expect(mockRemove).toHaveBeenCalledWith(keys);
+    expect(mockRemove).toHaveBeenCalledTimes(keys.length);
+    for (const k of keys) {
+      expect(mockRemove).toHaveBeenCalledWith(k);
+    }
   });
 });
 

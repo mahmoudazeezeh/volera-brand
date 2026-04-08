@@ -15,8 +15,8 @@ export type VoleraProfile = {
  * UPDATE public.volera_profiles SET role = 'admin', account_status = 'active'
  * WHERE lower(email) = lower('mahmmoadaziza@gmail.com');
  *
- * لإضافة/تعديل/حذف المنتجات من لوحة التحكم، نفّذ (أعد تنفيذه بعد كل تعديل على الدالة):
- * insforge/rls_products_admin.sql — الدالة تستخدم request.jwt.claims->>'sub' مع InsForge (ليس auth.uid() فقط).
+ * لوحة التحكم (منتجات، مناطق، طلبات، إحصائيات): نفّذ insforge/rls_products_admin.sql في InsForge
+ * (يشمل delivery_zones، orders، order_items، volera_profiles + products/product_images).
  */
 export async function fetchProfile(userId: string) {
   const { data, error } = await insforge.database
