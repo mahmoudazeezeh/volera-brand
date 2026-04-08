@@ -30,6 +30,7 @@ import {
 } from '../lib/zonesApi';
 import HeroSlidesAdminTab from '../components/admin/HeroSlidesAdminTab';
 import VoleraLogo from '../components/VoleraLogo';
+import { enhanceAdminDbErrorMessage } from '../lib/adminDbMessages';
 
 const PLACEHOLDER_IMAGE =
   'https://placehold.co/600x600/111111/D4AF37/png?text=VOLERA';
@@ -175,12 +176,18 @@ export default function AdminPanel() {
         </div>
 
         {formMsg && (
-          <p className="text-amber-200/90 text-sm mb-4 glass rounded-xl px-4 py-2">{formMsg}</p>
+          <p className="text-amber-200/90 text-sm mb-4 glass rounded-xl px-4 py-2 whitespace-pre-line">
+            {enhanceAdminDbErrorMessage(formMsg)}
+          </p>
         )}
 
         {tab === 'overview' && (
           <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {statsErr && <p className="text-red-400 col-span-full text-sm">{statsErr}</p>}
+            {statsErr && (
+              <p className="text-red-400 col-span-full text-sm whitespace-pre-line">
+                {enhanceAdminDbErrorMessage(statsErr)}
+              </p>
+            )}
             <StatCard title="المستخدمون" value={stats.totalUsers} />
             <StatCard title="الطلبات" value={stats.totalOrders} />
             <StatCard title="قيد الانتظار" value={stats.pendingOrders} />

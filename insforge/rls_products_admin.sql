@@ -1,18 +1,38 @@
 -- =============================================================================
--- VOLERA — Row Level Security للوحة التحكم + المتجر (InsForge / PostgREST)
+-- VOLERA — Row Level Security (InsForge PostgREST / PostgreSQL 15)
 -- =============================================================================
--- نفّذ هذا الملف كاملاً في InsForge → SQL بعد إنشاء الجداول.
+-- نفّذ الملف كاملاً في InsForge → SQL.
 --
--- يغطّي: products, product_images, delivery_zones, orders, order_items,
---         volera_profiles
--- الهيرو: بعد هذا الملف نفّذ insforge/hero_slides.sql (يعتمد على volera_is_admin).
+-- يعتمد على: request.jwt.claims (PostgREST). إن فشل استخراج sub/email تُرفض صلاحيات
+-- المشرف — لذلك نجمع عدة أشكال شائعة (InsForge / Supabase-like).
 --
--- المشرف: volera_is_admin() — JWT ‎sub‎ أو ‎auth.uid()‎ + (بريد ADMIN أو role في volera_profiles)
--- الطلبات الضيف: INSERT على orders و order_items مسموح للجميع (WITH CHECK true)
+-- الجداول: products, product_images, delivery_zones, orders, order_items,
+--           volera_profiles  (+ hero_slides عبر hero_slides.sql لاحقاً)
 -- =============================================================================
 
 -- ---------------------------------------------------------------------------
--- مطالبات JWT (InsForge يضع ‎request.jwt.claims‎)
+-- auth.uid() قد لا يكون متوفراً أو قد يرمي استثناء في بعض إعدادات InsForge؛
+-- لا نسمح بأن يكسر ذلك كامل دالة المشرف.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.volera_safe_auth_uid()
+RETURNS text
+LANGUAGE plpgsql
+STABLE
+SECURITY INVOKER
+SET search_path = public
+AS $$
+BEGIN
+  IF auth.uid() IS NULL THEN
+    RETURN NULL;
+  END IF;
+  RETURN NULLIF(trim(auth.uid()::text), '');
+EXCEPTION WHEN OTHERS THEN
+  RETURN NULL;
+END;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- مطالبات JWT: دعم JSON مباشر أو سلسلة JSON داخل jsonb (تشفير مزدوج نادر)
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.volera_jwt_claims()
 RETURNS jsonb
@@ -23,37 +43,82 @@ SET search_path = public
 AS $$
 DECLARE
   raw text;
+  claims jsonb;
 BEGIN
   raw := current_setting('request.jwt.claims', true);
   IF raw IS NULL OR btrim(raw) = '' THEN
     RETURN '{}'::jsonb;
   END IF;
-  RETURN raw::jsonb;
+  claims := raw::jsonb;
+  IF jsonb_typeof(claims) = 'string' THEN
+    BEGIN
+      claims := (claims #>> '{}')::jsonb;
+    EXCEPTION WHEN OTHERS THEN
+      RETURN '{}'::jsonb;
+    END;
+  END IF;
+  RETURN claims;
 EXCEPTION WHEN OTHERS THEN
   RETURN '{}'::jsonb;
 END;
 $$;
 
+-- ---------------------------------------------------------------------------
+-- معرّف المستخدم من الجلسة (sub، auth.uid، أو حقول متداخلة شائعة)
+-- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.volera_requesting_user_id()
 RETURNS text
-LANGUAGE sql
+LANGUAGE plpgsql
 STABLE
 SECURITY INVOKER
 SET search_path = public
 AS $$
-  SELECT NULLIF(
-    trim(
-      COALESCE(
-        NULLIF(auth.uid()::text, ''),
-        NULLIF(public.volera_jwt_claims()->>'sub', '')
-      )
-    ),
-    ''
-  );
+DECLARE
+  claims jsonb;
+  sub text;
+  u text;
+BEGIN
+  u := public.volera_safe_auth_uid();
+  IF u IS NOT NULL THEN
+    RETURN u;
+  END IF;
+
+  claims := public.volera_jwt_claims();
+
+  sub := NULLIF(trim(claims ->> 'sub'), '');
+  IF sub IS NOT NULL THEN
+    RETURN sub;
+  END IF;
+
+  sub := NULLIF(trim(claims #>> '{user,id}'), '');
+  IF sub IS NOT NULL THEN RETURN sub; END IF;
+
+  sub := NULLIF(trim(claims #>> '{userId}'), '');
+  IF sub IS NOT NULL THEN RETURN sub; END IF;
+
+  sub := NULLIF(trim(claims #>> '{user_id}'), '');
+  IF sub IS NOT NULL THEN RETURN sub; END IF;
+
+  RETURN NULL;
+END;
 $$;
 
 -- ---------------------------------------------------------------------------
--- المشرف (SECURITY DEFINER — يقرأ volera_profiles متجاهلاً RLS على الملفات)
+-- مقارنة id الملف الشخصي مع JWT (UUID مع/بدون شرطات، حالة الأحرف)
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.volera_profile_id_matches(profile_id text, jwt_uid text)
+RETURNS boolean
+LANGUAGE sql
+IMMUTABLE
+SET search_path = public
+AS $$
+  SELECT NULLIF(trim(lower(replace(coalesce(profile_id, ''), '-', ''))), '')
+      = NULLIF(trim(lower(replace(coalesce(jwt_uid, ''), '-', ''))), '')
+    AND NULLIF(trim(lower(replace(coalesce(jwt_uid, ''), '-', ''))), '') IS NOT NULL;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- المشرف — SECURITY DEFINER لقراءة volera_profiles رغم RLS على الجدول
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.volera_is_admin()
 RETURNS boolean
@@ -67,21 +132,31 @@ DECLARE
   claim_email text;
   uid text;
   claims jsonb;
+  jwt_role text;
 BEGIN
+  claims := public.volera_jwt_claims();
+
+  -- رمز مشروع InsForge (JWT موقّع من المنصة فقط — لا يضعه المستخدم يدوياً)
+  jwt_role := lower(trim(coalesce(claims ->> 'role', '')));
+  IF jwt_role = 'project_admin' THEN
+    RETURN true;
+  END IF;
+
   uid := public.volera_requesting_user_id();
   IF uid IS NULL THEN
     RETURN false;
   END IF;
 
-  claims := public.volera_jwt_claims();
-
   claim_email := lower(trim(coalesce(
-    claims->>'email',
+    claims ->> 'email',
     claims #>> '{user,email}',
-    claims->'user_metadata'->>'email',
-    claims->'app_metadata'->>'email',
+    claims -> 'user' ->> 'email',
+    claims -> 'user' ->> 'Email',
+    claims -> 'user_metadata' ->> 'email',
+    claims -> 'app_metadata' ->> 'email',
     ''
   )));
+
   IF claim_email <> '' AND claim_email = lower(trim(volera_admin_email)) THEN
     RETURN true;
   END IF;
@@ -89,20 +164,36 @@ BEGIN
   RETURN EXISTS (
     SELECT 1
     FROM public.volera_profiles vp
-    WHERE vp.id::text = uid
-      AND vp.role = 'admin'
+    WHERE vp.role = 'admin'
       AND vp.account_status IN ('active', 'pending_verification')
+      AND public.volera_profile_id_matches(vp.id::text, uid)
   );
 END;
 $$;
 
+REVOKE ALL ON FUNCTION public.volera_safe_auth_uid() FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.volera_jwt_claims() FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.volera_requesting_user_id() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.volera_profile_id_matches(text, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.volera_is_admin() FROM PUBLIC;
 
+GRANT EXECUTE ON FUNCTION public.volera_safe_auth_uid() TO authenticated, anon;
 GRANT EXECUTE ON FUNCTION public.volera_jwt_claims() TO authenticated, anon;
 GRANT EXECUTE ON FUNCTION public.volera_requesting_user_id() TO authenticated, anon;
+GRANT EXECUTE ON FUNCTION public.volera_profile_id_matches(text, text) TO authenticated, anon;
 GRANT EXECUTE ON FUNCTION public.volera_is_admin() TO authenticated, anon;
+
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'project_admin') THEN
+    EXECUTE 'GRANT EXECUTE ON FUNCTION public.volera_safe_auth_uid() TO project_admin';
+    EXECUTE 'GRANT EXECUTE ON FUNCTION public.volera_jwt_claims() TO project_admin';
+    EXECUTE 'GRANT EXECUTE ON FUNCTION public.volera_requesting_user_id() TO project_admin';
+    EXECUTE 'GRANT EXECUTE ON FUNCTION public.volera_profile_id_matches(text, text) TO project_admin';
+    EXECUTE 'GRANT EXECUTE ON FUNCTION public.volera_is_admin() TO project_admin';
+  END IF;
+END
+$$;
 
 -- =============================================================================
 -- products
@@ -156,7 +247,7 @@ CREATE POLICY "product_images_admin_delete"
   ON public.product_images FOR DELETE USING (public.volera_is_admin());
 
 -- =============================================================================
--- delivery_zones — قراءة للمتجر (نشط) + إدارة كاملة للمشرف
+-- delivery_zones
 -- =============================================================================
 ALTER TABLE public.delivery_zones ENABLE ROW LEVEL SECURITY;
 
@@ -182,7 +273,7 @@ CREATE POLICY "delivery_zones_delete_admin"
   ON public.delivery_zones FOR DELETE USING (public.volera_is_admin());
 
 -- =============================================================================
--- orders — إنشاء طلب للجميع (ضيف)؛ عرض وتعديل للمشرف فقط
+-- orders
 -- =============================================================================
 ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
 
@@ -204,25 +295,39 @@ CREATE POLICY "orders_update_admin"
   WITH CHECK (public.volera_is_admin());
 
 -- =============================================================================
--- order_items — إدراج مع الطلب؛ قراءة/حذف للمشرف (صيانة)
+-- order_items (تخطّي تلقائياً إن لم يوجد الجدول)
 -- =============================================================================
-ALTER TABLE public.order_items ENABLE ROW LEVEL SECURITY;
+DO $$
+BEGIN
+  IF to_regclass('public.order_items') IS NULL THEN
+    RAISE NOTICE 'تخطّي order_items: الجدول غير موجود';
+    RETURN;
+  END IF;
+  EXECUTE 'ALTER TABLE public.order_items ENABLE ROW LEVEL SECURITY';
 
-DROP POLICY IF EXISTS "order_items_insert_checkout" ON public.order_items;
-DROP POLICY IF EXISTS "order_items_select_admin" ON public.order_items;
-DROP POLICY IF EXISTS "order_items_delete_admin" ON public.order_items;
+  EXECUTE 'DROP POLICY IF EXISTS "order_items_insert_checkout" ON public.order_items';
+  EXECUTE 'DROP POLICY IF EXISTS "order_items_select_admin" ON public.order_items';
+  EXECUTE 'DROP POLICY IF EXISTS "order_items_delete_admin" ON public.order_items';
 
-CREATE POLICY "order_items_insert_checkout"
-  ON public.order_items FOR INSERT WITH CHECK (true);
+  EXECUTE $p$
+    CREATE POLICY "order_items_insert_checkout"
+      ON public.order_items FOR INSERT WITH CHECK (true)
+  $p$;
 
-CREATE POLICY "order_items_select_admin"
-  ON public.order_items FOR SELECT USING (public.volera_is_admin());
+  EXECUTE $p$
+    CREATE POLICY "order_items_select_admin"
+      ON public.order_items FOR SELECT USING (public.volera_is_admin())
+  $p$;
 
-CREATE POLICY "order_items_delete_admin"
-  ON public.order_items FOR DELETE USING (public.volera_is_admin());
+  EXECUTE $p$
+    CREATE POLICY "order_items_delete_admin"
+      ON public.order_items FOR DELETE USING (public.volera_is_admin())
+  $p$;
+END
+$$;
 
 -- =============================================================================
--- volera_profiles — المستخدم يسجّل ملفه؛ المشرف يرى الجميع (إحصائيات)
+-- volera_profiles — مطابقة المالك مع تطبيع id مثل دالة المشرف
 -- =============================================================================
 ALTER TABLE public.volera_profiles ENABLE ROW LEVEL SECURITY;
 
@@ -234,7 +339,7 @@ DROP POLICY IF EXISTS "volera_profiles_delete_admin" ON public.volera_profiles;
 
 CREATE POLICY "volera_profiles_insert_own"
   ON public.volera_profiles FOR INSERT
-  WITH CHECK (id::text = public.volera_requesting_user_id());
+  WITH CHECK (public.volera_profile_id_matches(id::text, public.volera_requesting_user_id()));
 
 CREATE POLICY "volera_profiles_insert_admin"
   ON public.volera_profiles FOR INSERT WITH CHECK (public.volera_is_admin());
@@ -242,25 +347,24 @@ CREATE POLICY "volera_profiles_insert_admin"
 CREATE POLICY "volera_profiles_select_own_or_admin"
   ON public.volera_profiles FOR SELECT
   USING (
-    id::text = public.volera_requesting_user_id()
+    public.volera_profile_id_matches(id::text, public.volera_requesting_user_id())
     OR public.volera_is_admin()
   );
 
 CREATE POLICY "volera_profiles_update_own_or_admin"
   ON public.volera_profiles FOR UPDATE
   USING (
-    id::text = public.volera_requesting_user_id()
+    public.volera_profile_id_matches(id::text, public.volera_requesting_user_id())
     OR public.volera_is_admin()
   )
   WITH CHECK (
-    id::text = public.volera_requesting_user_id()
+    public.volera_profile_id_matches(id::text, public.volera_requesting_user_id())
     OR public.volera_is_admin()
   );
 
 -- =============================================================================
--- تحقق يدوي بعد التنفيذ:
--- 1) حدّث volera_admin_email أعلاه إن اختلف عن src/config/volera.ts (ADMIN_EMAIL)
--- 2) UPDATE public.volera_profiles SET role='admin', account_status='active'
---    WHERE lower(email) = lower('بريدك');
--- 3) نفّذ insforge/hero_slides.sql لسلايدر لوحة التحكم
+-- 1) وافق volera_admin_email مع src/config/volera.ts (ADMIN_EMAIL)
+-- 2) أو: UPDATE public.volera_profiles SET role='admin', account_status='active'
+--    WHERE public.volera_profile_id_matches(id::text, '<sub من JWT>');
+-- 3) ثم insforge/hero_slides.sql
 -- =============================================================================
