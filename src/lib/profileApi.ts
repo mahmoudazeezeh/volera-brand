@@ -16,7 +16,7 @@ export type VoleraProfile = {
  * WHERE lower(email) = lower('mahmmoadaziza@gmail.com');
  *
  * لإضافة/تعديل/حذف المنتجات من لوحة التحكم، نفّذ (أعد تنفيذه بعد كل تعديل على الدالة):
- * insforge/rls_products_admin.sql (RLS + دالة volera_is_admin لجدولي products و product_images).
+ * insforge/rls_products_admin.sql — الدالة تستخدم request.jwt.claims->>'sub' مع InsForge (ليس auth.uid() فقط).
  */
 export async function fetchProfile(userId: string) {
   const { data, error } = await insforge.database

@@ -10,6 +10,12 @@
 -- 2) أو سجل volera_profiles: role = 'admin' وحالة حساب نشطة أو قيد التحقق
 -- =============================================================================
 
+-- ---------------------------------------------------------------------------
+-- InsForge / PostgREST: معرّف المستخدم يأتي غالباً من JWT ‎sub‎ وليس من ‎auth.uid()‎
+-- (انظر docs.insforge.dev — ‎request.jwt.claims‎). إن بقي الاعتماد على ‎auth.uid()‎ فقط،
+-- تُرجَع ‎volera_is_admin() = false‎ دائماً ويظهر خطأ RLS على ‎products‎.
+-- ---------------------------------------------------------------------------
+
 -- دالة آمنة تتحقق من دور المشرف (تقرأ volera_profiles بصلاحية المالك لتجاوز RLS على الملفات الشخصية)
 CREATE OR REPLACE FUNCTION public.volera_is_admin()
 RETURNS boolean
@@ -21,17 +27,43 @@ AS $$
 DECLARE
   volera_admin_email constant text := 'mahmmoadaziza@gmail.com';
   claim_email text;
+  uid text;
+  claims jsonb;
+  raw_claims text;
 BEGIN
-  -- بدون مستخدم JWT لا يُسمح بعمليات المشرف
-  IF auth.uid() IS NULL THEN
+  -- قراءة مطالبات JWT كما يضعها PostgREST في InsForge
+  BEGIN
+    raw_claims := current_setting('request.jwt.claims', true);
+    IF raw_claims IS NOT NULL AND btrim(raw_claims) <> '' THEN
+      claims := raw_claims::jsonb;
+    ELSE
+      claims := '{}'::jsonb;
+    END IF;
+  EXCEPTION WHEN OTHERS THEN
+    claims := '{}'::jsonb;
+  END;
+
+  -- معرّف المستخدم: Supabase ‎auth.uid()‎ ثم ‎sub‎ من JWT (الأهم في InsForge)
+  uid := NULLIF(
+    trim(
+      COALESCE(
+        NULLIF(auth.uid()::text, ''),
+        NULLIF(claims->>'sub', '')
+      )
+    ),
+    ''
+  );
+
+  IF uid IS NULL THEN
     RETURN false;
   END IF;
 
-  -- مطابقة لوحة التحكم: نفس البريد الافتراضي للمشرف في التطبيق (ADMIN_EMAIL)
+  -- مطابقة لوحة التحكم: نفس البريد في ‎src/config/volera.ts‎ — ADMIN_EMAIL
   claim_email := lower(trim(coalesce(
-    auth.jwt() ->> 'email',
-    auth.jwt() -> 'user' ->> 'email',
-    auth.jwt() -> 'user_metadata' ->> 'email',
+    claims->>'email',
+    claims #>> '{user,email}',
+    claims->'user_metadata'->>'email',
+    claims->'app_metadata'->>'email',
     ''
   )));
   IF claim_email <> '' AND claim_email = lower(trim(volera_admin_email)) THEN
@@ -41,7 +73,7 @@ BEGIN
   RETURN EXISTS (
     SELECT 1
     FROM public.volera_profiles vp
-    WHERE vp.id::text = auth.uid()::text
+    WHERE vp.id::text = uid
       AND vp.role = 'admin'
       AND vp.account_status IN ('active', 'pending_verification')
   );
@@ -50,7 +82,8 @@ $$;
 
 REVOKE ALL ON FUNCTION public.volera_is_admin() FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.volera_is_admin() TO authenticated;
--- إن كان العميل يستخدم دوراً آخر للمستخدمين المسجلين، أضف: GRANT EXECUTE ... TO anon;
+-- طلبات المتصفح أحياناً بدور ‎anon‎ مع تمرير JWT المستخدم؛ بدون هذا قد تفشل سياسات الإدارة:
+GRANT EXECUTE ON FUNCTION public.volera_is_admin() TO anon;
 
 -- ---------------------------------------------------------------------------
 -- products
@@ -119,5 +152,7 @@ CREATE POLICY "product_images_admin_delete"
   USING (public.volera_is_admin());
 
 -- =============================================================================
--- إن فشل auth.uid() في بيئتك، راجع وثائق InsForge لاسم الدالة الصحيحة للمعرّف.
+-- بعد التعديل: نفّذ هذا الملف كاملاً مرة أخرى في InsForge → SQL.
+-- إن استمر الخطأ: UPDATE public.volera_profiles SET role='admin', account_status='active'
+-- WHERE id = '<ضع_هنا_قيمة_sub_من_JWT>';  (أو WHERE lower(email) = lower('بريدك')).
 -- =============================================================================
