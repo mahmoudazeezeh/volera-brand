@@ -18,6 +18,11 @@ npm run preview
 
 انسخ `.env.example` إلى `.env` واضبط متغيرات الربط بالخادم عند الحاجة.
 
+### لوحة التحكم والمنتجات (InsForge)
+
+إذا ظهر خطأ **row-level security** عند إضافة أو تعديل منتج، نفّذ في InsForge → SQL محتوى الملف **`insforge/rls_products_admin.sql`** مرة واحدة.  
+تأكد أن حسابك في **`volera_profiles`** له **`role = 'admin'`** و **`account_status = 'active'`** (انظر تعليقات `src/lib/profileApi.ts`).
+
 ## النشر على GitHub Pages
 
 السير يبني المشروع ويدفع محتوى **`dist`** إلى فرع **`gh-pages`** تلقائياً عند كل دفع إلى **`main`**.

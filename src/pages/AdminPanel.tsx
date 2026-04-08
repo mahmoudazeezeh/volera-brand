@@ -258,20 +258,32 @@ function ProductsAdminTab({
     })();
   }, [editing]);
 
+  useEffect(() => {
+    if (!editing) return;
+    const t = window.setTimeout(() => {
+      document.getElementById('volera-product-editor')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 80);
+    return () => window.clearTimeout(t);
+  }, [editing?.id]);
+
   return (
     <div className="space-y-10">
-      <ProductEditorForm
-        key={editing?.id ?? 'new'}
-        initial={editing}
-        onCancel={() => setEditing(null)}
-        onSaved={async () => {
-          onMessage(null);
-          await onRefresh();
-          setEditing(null);
-        }}
-        onMediaChanged={() => void onRefresh()}
-        onMessage={onMessage}
-      />
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="text-xl font-bold text-white">إدارة المنتجات</h2>
+        <button
+          type="button"
+          onClick={() => {
+            setEditing(null);
+            onMessage(null);
+            window.setTimeout(() => {
+              document.getElementById('volera-product-editor')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 50);
+          }}
+          className="luxury-button px-6 py-2.5 rounded-full text-black font-bold text-sm"
+        >
+          + إضافة منتج جديد
+        </button>
+      </div>
 
       <div>
         <h2 className="text-xl font-bold text-white mb-4">تنبيه المخزون المنخفض</h2>
@@ -316,7 +328,7 @@ function ProductsAdminTab({
                   <th className="p-3">السعر النهائي</th>
                   <th className="p-3">المخزون</th>
                   <th className="p-3">تنبيه</th>
-                  <th className="p-3"></th>
+                  <th className="p-3 whitespace-nowrap">إجراءات</th>
                 </tr>
               </thead>
               <tbody>
@@ -328,13 +340,35 @@ function ProductsAdminTab({
                     <td className="p-3">{p.stockQuantity}</td>
                     <td className="p-3">{p.lowStock ? '⚠️' : '—'}</td>
                     <td className="p-3">
-                      <button
-                        type="button"
-                        onClick={() => setEditing(p)}
-                        className="text-[#D4AF37] underline"
-                      >
-                        تعديل
-                      </button>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditing(p);
+                            onMessage(null);
+                          }}
+                          className="text-[#D4AF37] underline"
+                        >
+                          تعديل
+                        </button>
+                        <span className="text-white/20">|</span>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            if (!window.confirm(`حذف المنتج «${p.nameAr}» نهائياً؟`)) return;
+                            const r = await adminDeleteProduct(p.id);
+                            if (!r.ok) onMessage(r.error);
+                            else {
+                              onMessage(null);
+                              if (editing?.id === p.id) setEditing(null);
+                              await onRefresh();
+                            }
+                          }}
+                          className="text-red-400 hover:text-red-300 underline text-xs"
+                        >
+                          حذف
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -408,6 +442,21 @@ function ProductsAdminTab({
           </div>
         </div>
       )}
+
+      <div id="volera-product-editor" className="scroll-mt-28">
+        <ProductEditorForm
+          key={editing?.id ?? 'new'}
+          initial={editing}
+          onCancel={() => setEditing(null)}
+          onSaved={async () => {
+            onMessage(null);
+            await onRefresh();
+            setEditing(null);
+          }}
+          onMediaChanged={() => void onRefresh()}
+          onMessage={onMessage}
+        />
+      </div>
     </div>
   );
 }
