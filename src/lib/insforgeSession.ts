@@ -9,10 +9,27 @@ import {
 type TokenManagerLike = {
   saveSession: (s: { accessToken: string; user: UserSchema }) => void;
   getUser: () => UserSchema | null;
+  setAccessToken: (token: string) => void;
 };
 
 function getTokenManager(): TokenManagerLike {
   return (insforge as unknown as { tokenManager: TokenManagerLike }).tokenManager;
+}
+
+/**
+ * طبقة PostgREST في @insforge/sdk تضع `Authorization` من tokenManager.getAccessToken() أولاً؛
+ * إن وُجدت قيمة (حتى منتهية) تُتجاهل `HttpClient.setAuthToken`. لذلك يجب تحديث tokenManager
+ * مع كل access token جديد وإلا تبقى عمليات products على JWT قديم وتفشل RLS/الصلاحيات.
+ */
+export function syncInsforgeAccessTokenForDatabase(accessToken: string, userHint?: UserSchema | null): void {
+  const tm = getTokenManager();
+  const user = userHint ?? tm.getUser() ?? undefined;
+  insforge.getHttpClient().setAuthToken(accessToken);
+  if (user) {
+    tm.saveSession({ accessToken, user });
+  } else {
+    tm.setAccessToken(accessToken);
+  }
 }
 
 export function isLikelyInvalidTokenMessage(message: unknown): boolean {
@@ -33,6 +50,8 @@ export async function ensureValidInsforgeAccessToken(): Promise<void> {
   const { data, error } = await insforge.auth.refreshSession();
   if (!error && data?.accessToken) {
     persistRefreshTokenFromAuthPayload(data);
+    const u = (data as { user?: UserSchema }).user;
+    syncInsforgeAccessTokenForDatabase(data.accessToken, u ?? null);
     return;
   }
 
@@ -82,12 +101,9 @@ export async function ensureValidInsforgeAccessToken(): Promise<void> {
     }
   }
 
-  if (user) {
-    getTokenManager().saveSession({ accessToken, user });
-  }
-  insforge.getHttpClient().setAuthToken(accessToken);
   insforge.getHttpClient().setRefreshToken(newRt);
   persistInsforgeRefreshToken(newRt);
+  syncInsforgeAccessTokenForDatabase(accessToken, user ?? null);
 }
 
 export { persistInsforgeRefreshToken, persistRefreshTokenFromAuthPayload };

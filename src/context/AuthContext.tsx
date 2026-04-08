@@ -10,6 +10,7 @@ import {
 import type { UserSchema } from '@insforge/sdk';
 import { insforge } from '../lib/insforgeClient';
 import { persistInsforgeRefreshToken, persistRefreshTokenFromAuthPayload } from '../lib/insforgeAuthStorage';
+import { syncInsforgeAccessTokenForDatabase } from '../lib/insforgeSession';
 import { ADMIN_EMAIL } from '../config/volera';
 import { fetchProfile, type VoleraProfile } from '../lib/profileApi';
 
@@ -78,6 +79,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const { data, error } = await insforge.auth.signInWithPassword({ email, password });
     if (error) return { error: error as Error };
     persistRefreshTokenFromAuthPayload(data);
+    const signed = data as { accessToken?: string; user?: AuthUser };
+    if (typeof signed.accessToken === 'string') {
+      syncInsforgeAccessTokenForDatabase(signed.accessToken, signed.user ?? null);
+    }
     if (data?.user) {
       setUser(data.user);
       const { data: p } = await fetchProfile(data.user.id);
@@ -113,6 +118,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const { data, error } = await insforge.auth.verifyEmail({ email, otp });
     if (error) return { error: error as Error };
     persistRefreshTokenFromAuthPayload(data);
+    const verified = data as { accessToken?: string; user?: AuthUser };
+    if (typeof verified.accessToken === 'string') {
+      syncInsforgeAccessTokenForDatabase(verified.accessToken, verified.user ?? null);
+    }
     const u = data?.user;
     if (u) {
       setUser(u);
