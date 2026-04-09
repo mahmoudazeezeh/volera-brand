@@ -488,6 +488,14 @@ function ProductEditorForm({
   onMessage: (s: string | null) => void;
   onMediaChanged?: () => void;
 }) {
+  function parseDiscountInput(raw: string): number | null {
+    const normalized = raw.trim().replace(',', '.');
+    if (!normalized) return 0;
+    const parsed = Number(normalized);
+    if (!Number.isFinite(parsed)) return null;
+    return parsed;
+  }
+
   const [name, setName] = useState(initial?.name ?? '');
   const [nameAr, setNameAr] = useState(initial?.nameAr ?? '');
   const [price, setPrice] = useState(String(initial?.price ?? ''));
@@ -553,6 +561,11 @@ function ProductEditorForm({
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     onMessage(null);
+    const parsedDiscount = parseDiscountInput(discount);
+    if (parsedDiscount == null || parsedDiscount < 0 || parsedDiscount > 100) {
+      onMessage('نسبة الخصم يجب أن تكون رقماً بين 0 و 100 (مثال: 12.5)');
+      return;
+    }
     setBusy(true);
     const img = imageUrl.trim() || PLACEHOLDER_IMAGE;
     if (initial) {
@@ -560,7 +573,7 @@ function ProductEditorForm({
         name: name.trim(),
         name_ar: nameAr.trim(),
         price: Number(price),
-        discount: Number(discount) || 0,
+        discount: parsedDiscount,
         category,
         description: desc.trim(),
         description_ar: descAr.trim(),
@@ -578,7 +591,7 @@ function ProductEditorForm({
       name: name.trim(),
       name_ar: nameAr.trim(),
       price: Number(price),
-      discount: Number(discount) || 0,
+      discount: parsedDiscount,
       category,
       description: desc.trim(),
       description_ar: descAr.trim(),
@@ -630,12 +643,11 @@ function ProductEditorForm({
         <div>
           <label className="text-gray-400 text-sm">نسبة الخصم %</label>
           <input
-            type="number"
+            type="text"
+            inputMode="decimal"
             value={discount}
             onChange={(e) => setDiscount(e.target.value)}
-            step="0.1"
-            min="0"
-            max="100"
+            placeholder="مثال: 12.5"
             className="w-full mt-1 glass rounded-xl px-4 py-3 text-white"
           />
         </div>
@@ -774,6 +786,37 @@ function Field({
   );
 }
 
+type OrderDisplayItem = {
+  name_ar: string;
+  size: string;
+  quantity: number;
+  unit_price: number;
+};
+
+function parseOrderItems(items: unknown): OrderDisplayItem[] {
+  let raw: unknown = items;
+  if (typeof items === 'string') {
+    try {
+      raw = JSON.parse(items);
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((it) => {
+      if (!it || typeof it !== 'object') return null;
+      const row = it as Record<string, unknown>;
+      return {
+        name_ar: typeof row.name_ar === 'string' ? row.name_ar : 'منتج',
+        size: typeof row.size === 'string' ? row.size : '—',
+        quantity: Number(row.quantity) || 0,
+        unit_price: Number(row.unit_price) || 0,
+      } as OrderDisplayItem;
+    })
+    .filter((x): x is OrderDisplayItem => Boolean(x));
+}
+
 function OrdersAdminTab({
   orders,
   loading,
@@ -838,7 +881,28 @@ function OrdersAdminTab({
                     </select>
                   </td>
                   <td className="p-3 text-xs text-gray-400 max-w-xs whitespace-pre-wrap break-words">
-                    {typeof o.items === 'string' ? o.items : JSON.stringify(o.items, null, 0)}
+                    {(() => {
+                      const parsedItems = parseOrderItems(o.items);
+                      if (!parsedItems.length) {
+                        return <span className="text-gray-500">لا توجد بنود مفهومة لهذا الطلب</span>;
+                      }
+                      return (
+                        <div className="space-y-2">
+                          {parsedItems.map((item, idx) => (
+                            <div
+                              key={`${o.id}-item-${idx}`}
+                              className="rounded-lg bg-white/5 border border-white/10 px-2 py-1.5"
+                            >
+                              <p className="text-white text-xs font-medium">{item.name_ar}</p>
+                              <p className="text-gray-400 text-[11px]">
+                                الحجم: {item.size} | الكمية: {item.quantity} | سعر الوحدة:{' '}
+                                {item.unit_price} ₪ | المجموع: {item.unit_price * item.quantity} ₪
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()}
                     {o.delivery_details ? (
                       <div className="mt-2 text-gray-500">تفاصيل: {o.delivery_details}</div>
                     ) : null}
