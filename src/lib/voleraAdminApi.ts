@@ -10,6 +10,17 @@ function dbErr(e: unknown): string {
   return String(e);
 }
 
+function encodeDiscountForDb(discount: number | undefined): number {
+  if (!Number.isFinite(discount)) return 0;
+  const safe = Math.min(100, Math.max(0, discount ?? 0));
+  // عمود discount في القاعدة integer؛ نخزّن الكسور بدقة 0.1 على شكل قيمة مضروبة ×10.
+  // مثال: 12.5% تُخزَّن 125. القيم الصحيحة تبقى كما هي (12 -> 12).
+  if (Math.abs(safe - Math.trunc(safe)) > 0.000001) {
+    return Math.round(safe * 10);
+  }
+  return Math.trunc(safe);
+}
+
 export const PRODUCT_IMAGES_BUCKET = 'product-images';
 
 export type OrderStatus = 'pending' | 'confirmed' | 'delivered' | 'cancelled';
@@ -317,6 +328,7 @@ export async function adminInsertProduct(
 ): Promise<{ ok: true; id: number } | { ok: false; error: string }> {
   await ensureValidInsforgeAccessToken();
   const images = row.images?.length ? row.images : [row.image];
+  const encodedDiscount = encodeDiscountForDb(row.discount);
   const doInsert = () =>
     insforge.database
       .from('products')
@@ -325,7 +337,7 @@ export async function adminInsertProduct(
           name: row.name.trim(),
           name_ar: row.name_ar.trim(),
           price: row.price,
-          discount: row.discount ?? 0,
+          discount: encodedDiscount,
           image: row.image,
           category: row.category,
           description: row.description.trim(),
@@ -385,6 +397,9 @@ export async function adminUpdateProduct(
 
   // إذا تغيّرت الصورة الرئيسية دون تحديد مصفوفة الصور، نضيفها تلقائياً
   const finalPatch: typeof patch = { ...patch };
+  if (typeof finalPatch.discount === 'number') {
+    finalPatch.discount = encodeDiscountForDb(finalPatch.discount);
+  }
   if (finalPatch.image && !finalPatch.images?.length) {
     finalPatch.images = [finalPatch.image];
   }

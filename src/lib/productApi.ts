@@ -21,6 +21,12 @@ export type ProductRow = {
   size_ml?: string | null;
 };
 
+function decodeDiscountFromDb(raw: number | null): number {
+  if (raw == null || !Number.isFinite(raw)) return 0;
+  // القيم > 100 تمثل خصومات عشرية محفوظة بصيغة ×10 (125 => 12.5%).
+  return raw > 100 ? raw / 10 : raw;
+}
+
 function asStringArray(value: unknown): string[] {
   if (Array.isArray(value) && value.every((x) => typeof x === 'string')) {
     return value as string[];
@@ -51,7 +57,7 @@ function mergeGalleryImages(p: Product, gallery: Map<number, string[]>): Product
 
 export function mapRowToProduct(row: ProductRow): Product {
   const price = Number(row.price);
-  const discount = row.discount != null ? row.discount : 0;
+  const discount = decodeDiscountFromDb(row.discount);
   const computedFinal =
     row.final_price != null && row.final_price !== ''
       ? Number(row.final_price)
@@ -68,7 +74,7 @@ export function mapRowToProduct(row: ProductRow): Product {
       row.original_price != null && row.original_price !== ''
         ? Number(row.original_price)
         : undefined,
-    discount: row.discount != null ? row.discount : undefined,
+    discount: row.discount != null ? discount : undefined,
     finalPrice: computedFinal,
     image: row.image,
     category: row.category,
