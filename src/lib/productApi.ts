@@ -21,10 +21,18 @@ export type ProductRow = {
   size_ml?: string | null;
 };
 
-function decodeDiscountFromDb(raw: number | null): number {
-  if (raw == null || !Number.isFinite(raw)) return 0;
+function roundTo(value: number, digits: number): number {
+  const factor = 10 ** digits;
+  return Math.round(value * factor) / factor;
+}
+
+function decodeDiscountFromDb(raw: unknown): number {
+  if (raw == null || raw === '') return 0;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return 0;
   // القيم > 100 تمثل خصومات عشرية محفوظة بصيغة ×10 (125 => 12.5%).
-  return raw > 100 ? raw / 10 : raw;
+  const decoded = parsed > 100 ? parsed / 10 : parsed;
+  return roundTo(Math.min(100, Math.max(0, decoded)), 1);
 }
 
 function asStringArray(value: unknown): string[] {
@@ -58,10 +66,10 @@ function mergeGalleryImages(p: Product, gallery: Map<number, string[]>): Product
 export function mapRowToProduct(row: ProductRow): Product {
   const price = Number(row.price);
   const discount = decodeDiscountFromDb(row.discount);
-  const computedFinal =
-    row.final_price != null && row.final_price !== ''
-      ? Number(row.final_price)
-      : Math.round(price * (1 - discount / 100) * 100) / 100;
+  // لا نعتمد final_price من قاعدة البيانات لأن عمود discount integer
+  // وقد يكون مخزناً بترميز ×10 للكسور (مثل 12.5 => 125)،
+  // ما قد ينتج final_price غير صحيح من جهة الخادم.
+  const computedFinal = roundTo(Math.max(0, price * (1 - discount / 100)), 2);
   const stock = row.stock_quantity != null ? Number(row.stock_quantity) : 0;
   const lowTh = row.low_stock_threshold != null ? Number(row.low_stock_threshold) : 5;
 

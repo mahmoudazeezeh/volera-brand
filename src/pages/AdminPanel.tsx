@@ -493,7 +493,7 @@ function ProductEditorForm({
     if (!normalized) return 0;
     const parsed = Number(normalized);
     if (!Number.isFinite(parsed)) return null;
-    return parsed;
+    return Math.round(parsed * 10) / 10;
   }
 
   const [name, setName] = useState(initial?.name ?? '');
