@@ -1,5 +1,5 @@
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { ArrowRight, Heart, ShoppingCart, Sparkles } from 'lucide-react';
 import { fetchProductById } from '../lib/productApi';
 import type { Product } from '../types/Product';
@@ -22,14 +22,7 @@ export default function ProductDetails() {
 
   const { addItem } = useCart();
   const [selectedSize, setSelectedSize] = useState('50 مل');
-  const [selectedImage, setSelectedImage] = useState(0);
   const [cartNotice, setCartNotice] = useState(false);
-
-  const gallery = useMemo(() => {
-    if (!product) return [];
-    const u = [product.image, ...product.images].filter(Boolean);
-    return [...new Set(u)];
-  }, [product]);
 
   const wishlistOn = user?.id && product ? isSaved(product.id) : false;
 
@@ -59,10 +52,6 @@ export default function ProductDetails() {
       cancelled = true;
     };
   }, [id, numericId]);
-
-  useEffect(() => {
-    setSelectedImage(0);
-  }, [product?.id]);
 
   if (loading) {
     return (
@@ -124,32 +113,11 @@ export default function ProductDetails() {
             <div className="fade-in">
               <div className="glass-card rounded-3xl overflow-hidden mb-4">
                 <img
-                  src={gallery[selectedImage] ?? product.image}
+                  src={product.image}
                   alt={product.nameAr}
                   className="w-full aspect-square object-cover"
                 />
               </div>
-
-              {gallery.length > 1 && (
-                <div className="flex gap-4">
-                  {gallery.map((image, index) => (
-                    <button
-                      key={index}
-                      type="button"
-                      onClick={() => setSelectedImage(index)}
-                      className={`glass-card rounded-2xl overflow-hidden flex-1 transition-all duration-300 ${
-                        selectedImage === index ? 'border-[#D4AF37] border-2' : ''
-                      }`}
-                    >
-                      <img
-                        src={image}
-                        alt={`${product.nameAr} ${index + 1}`}
-                        className="w-full aspect-square object-cover"
-                      />
-                    </button>
-                  ))}
-                </div>
-              )}
             </div>
 
             <div className="fade-in-up">

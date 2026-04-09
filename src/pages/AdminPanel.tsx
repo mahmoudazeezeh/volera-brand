@@ -627,7 +627,18 @@ function ProductEditorForm({
         <Field label="الاسم (عربي)" value={nameAr} onChange={setNameAr} required />
         <Field label="الاسم (إنجليزي)" value={name} onChange={setName} required />
         <Field label="السعر الأساسي" value={price} onChange={setPrice} type="number" required />
-        <Field label="نسبة الخصم %" value={discount} onChange={setDiscount} type="number" />
+        <div>
+          <label className="text-gray-400 text-sm">نسبة الخصم %</label>
+          <input
+            type="number"
+            value={discount}
+            onChange={(e) => setDiscount(e.target.value)}
+            step="0.1"
+            min="0"
+            max="100"
+            className="w-full mt-1 glass rounded-xl px-4 py-3 text-white"
+          />
+        </div>
         <div className="sm:col-span-2">
           <label className="text-gray-400 text-sm">التصنيف</label>
           <select
